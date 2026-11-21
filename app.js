@@ -140,6 +140,8 @@
     "settings.update": "Изменение настроек",
     "staff.create": "Создание сотрудника",
     "staff.update": "Изменение сотрудника",
+    "profile.update": "Изменение профиля",
+    "profile.password": "Смена пароля",
   };
 
   const state = {
@@ -482,8 +484,6 @@
     if (!isCompactNav()) return;
     sidebarUi.navOpen = true;
     el.app.classList.add("nav-open");
-    el.navBackdrop?.classList.remove("hidden");
-    el.navBackdrop?.removeAttribute("hidden");
     el.btnNavOpen?.setAttribute("aria-expanded", "true");
     el.sidebar.setAttribute("aria-expanded", "true");
     document.body.classList.add("nav-lock");
@@ -494,8 +494,6 @@
   function closeMobileNav() {
     sidebarUi.navOpen = false;
     el.app.classList.remove("nav-open");
-    el.navBackdrop?.classList.add("hidden");
-    el.navBackdrop?.setAttribute("hidden", "");
     el.btnNavOpen?.setAttribute("aria-expanded", "false");
     if (isCompactNav()) el.sidebar.setAttribute("aria-expanded", "false");
     document.body.classList.remove("nav-lock");
@@ -587,7 +585,6 @@
         .map(
           (item) => `
         <button type="button" class="nav-item ${item.view === state.view ? "active" : ""}" data-view="${item.view}" role="menuitem">
-          <span class="nav-item-icon-wrap">${NAV_ICONS[item.icon] || ""}</span>
           <span class="nav-item-label">${item.label}</span>
           ${item.badge ? `<span class="nav-badge" data-badge="${item.badge}"></span>` : ""}
         </button>`
@@ -724,6 +721,12 @@
         const groupBadge = `<span class="nav-badge${groupCount > 0 ? " show" : ""}" data-group-badge="${group.id}">${
           groupCount > 9 ? "9+" : groupCount || ""
         }</span>`;
+        const expanded = compact
+          ? sidebarUi.expandedGroups.has(group.id) || active
+          : false;
+        const chevron = compact
+          ? `<span class="nav-section-chevron" aria-hidden="true">${NAV_ICONS.chevron || ""}</span>`
+          : "";
         const inlineItems =
           compact && group.items.length
             ? `<div class="nav-group-items">
@@ -731,7 +734,6 @@
                   .map(
                     (item) => `
                   <button type="button" class="nav-item ${item.view === state.view ? "active" : ""}" data-view="${item.view}">
-                    <span class="nav-item-icon-wrap">${NAV_ICONS[item.icon] || ""}</span>
                     <span class="nav-item-label">${item.label}</span>
                     ${item.badge ? `<span class="nav-badge" data-badge="${item.badge}"></span>` : ""}
                   </button>`
@@ -741,13 +743,13 @@
             : "";
 
         return `
-          <div class="nav-group ${active ? "is-active" : ""}" data-group="${group.id}">
+          <div class="nav-group ${active ? "is-active" : ""} ${expanded ? "is-expanded" : ""}" data-group="${group.id}">
             <button
               type="button"
               class="nav-section ${collapsed ? "nav-section--icon" : ""} ${active ? "active" : ""}"
               data-flyout-group="${group.id}"
               aria-label="${group.label}"
-              aria-expanded="${compact ? "true" : sidebarUi.flyoutId === group.id}"
+              aria-expanded="${compact ? String(expanded) : sidebarUi.flyoutId === group.id}"
               ${collapsed ? `data-tooltip="${group.label}" data-tooltip-placement="right"` : ""}
             >
               <span class="nav-item-icon-wrap">
@@ -757,7 +759,7 @@
               ${
                 collapsed
                   ? ""
-                  : `<span class="nav-section-label">${group.label}</span>${groupBadge}`
+                  : `<span class="nav-section-label">${group.label}</span>${groupBadge}${chevron}`
               }
             </button>
             ${inlineItems}
@@ -781,7 +783,16 @@
 
       btn.addEventListener("click", () => {
         if (isCompactNav()) {
-          if (group?.items.length === 1) navigateTo(group.items[0].view);
+          if (group?.items.length === 1) {
+            navigateTo(group.items[0].view);
+            return;
+          }
+          const open = sidebarUi.expandedGroups.has(groupId);
+          if (open) sidebarUi.expandedGroups.delete(groupId);
+          else sidebarUi.expandedGroups.add(groupId);
+          saveSidebarState();
+          groupEl?.classList.toggle("is-expanded", !open);
+          btn.setAttribute("aria-expanded", String(!open));
           return;
         }
         if (group?.items.length === 1) {
@@ -830,6 +841,99 @@
     if (e.key === "Escape" && sidebarUi.navOpen) closeMobileNav();
   });
 
+  function initialsFromName(name) {
+    const parts = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  }
+
+  function avatarMarkup(avatarId, initial) {
+    const pack = typeof getAvatarById === "function" ? getAvatarById(avatarId) : null;
+    if (pack) {
+      return typeof avatarImageHtml === "function"
+        ? avatarImageHtml(pack)
+        : `<img src="${pack.src}" alt="" width="80" height="80" />`;
+    }
+    return `<span class="avatar-initials">${initial || "?"}</span>`;
+  }
+
+  function paintAvatar(node, avatarId, initial) {
+    if (!node) return;
+    node.innerHTML = avatarMarkup(avatarId, initial);
+    node.classList.toggle(
+      "user-avatar--image",
+      Boolean(avatarId && typeof getAvatarById === "function" && getAvatarById(avatarId))
+    );
+  }
+
+  function syncHeaderUser() {
+    if (!state.role) return;
+    el.userName.textContent = state.role.name;
+    el.userRole.textContent = state.role.title;
+    paintAvatar(el.userAvatar, state.role.avatarId, state.role.initial);
+    el.userAvatar.title = `${state.role.name} — ${state.role.title}`;
+  }
+
+  function avatarPickerHtml(selectedId) {
+    const items = [
+      {
+        id: "",
+        label: "Инициалы",
+        preview: `<span class="avatar-initials">${state.role?.initial || "?"}</span>`,
+      },
+      ...(typeof AVATAR_PACK !== "undefined" ? AVATAR_PACK : []).map((a) => ({
+        id: a.id,
+        label: a.label,
+        preview:
+          typeof avatarImageHtml === "function"
+            ? avatarImageHtml(a)
+            : `<img src="${a.src}" alt="" width="80" height="80" />`,
+      })),
+    ];
+    return `
+      <div class="field field--full">
+        <span>Аватар</span>
+        <div class="avatar-picker" role="radiogroup" aria-label="Выбор аватара">
+          ${items
+            .map(
+              (item) => `
+            <label class="avatar-option ${
+              (selectedId || "") === item.id ? "is-selected" : ""
+            }" title="${escapeAttr(item.label)}">
+              <input type="radio" name="profile-avatar" value="${escapeAttr(
+                item.id
+              )}" ${ (selectedId || "") === item.id ? "checked" : "" } />
+              <span class="avatar-option-preview">${item.preview}</span>
+              <span class="avatar-option-label">${item.label}</span>
+            </label>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+  }
+
+  function openProfile() {
+    if (!state.role) return;
+    closeFlyout();
+    closeMobileNav();
+    state.view = "profile";
+    renderSidebar();
+    render();
+  }
+
+  function openProfileEdit() {
+    if (!state.role) return;
+    closeFlyout();
+    closeMobileNav();
+    state.view = "profile-form";
+    renderSidebar();
+    render();
+  }
+
   function showUserFlyout() {
     if (isCompactNav() || !sidebarUi.collapsed || !state.role || !el.userAvatar) return;
     clearHideFlyoutTimer();
@@ -839,26 +943,99 @@
       .forEach((btn) => btn.classList.remove("is-flyout-open"));
     el.sidebarFlyout.innerHTML = `
       <p class="sidebar-flyout-title">${state.role.name}</p>
+      <button type="button" class="nav-item" id="flyout-profile" role="menuitem">
+        <span class="nav-item-label">Профиль</span>
+      </button>
+      <button type="button" class="nav-item" id="flyout-profile-edit" role="menuitem">
+        <span class="nav-item-label">Редактировать</span>
+      </button>
       <button type="button" class="nav-item" id="flyout-logout" role="menuitem">
         <span class="nav-item-label">Выйти</span>
       </button>
     `;
     sidebarUi.flyoutId = "user";
     positionFlyout(el.userAvatar);
+    document.getElementById("flyout-profile")?.addEventListener("click", () => {
+      openProfile();
+    });
+    document.getElementById("flyout-profile-edit")?.addEventListener("click", () => {
+      openProfileEdit();
+    });
     document.getElementById("flyout-logout")?.addEventListener("click", () => {
       closeFlyout();
       el.btnLogout.click();
     });
   }
 
-  el.userAvatar?.addEventListener("click", showUserFlyout);
+  el.userAvatar?.addEventListener("click", () => {
+    if (!state.role) return;
+    if (isCompactNav()) {
+      openProfile();
+      return;
+    }
+    if (sidebarUi.collapsed) showUserFlyout();
+    else openProfile();
+  });
   el.userAvatar?.addEventListener("mouseenter", () => {
-    if (!sidebarUi.collapsed || !state.role) return;
+    if (isCompactNav() || !sidebarUi.collapsed || !state.role) return;
     showUserFlyout();
   });
   el.userAvatar?.addEventListener("mouseleave", scheduleHideFlyout);
 
+  const openProfileFromMeta = () => {
+    if (!state.role || sidebarUi.collapsed) return;
+    openProfile();
+  };
+  document.getElementById("user-meta")?.addEventListener("click", openProfileFromMeta);
+  document.getElementById("user-meta")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openProfileFromMeta();
+    }
+  });
+  document.getElementById("sidebar-user")?.classList.add("sidebar-user--interactive");
+
   /* —— login / logout —— */
+  const PASSWORD_TOGGLE_ICON = `
+    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
+  `;
+
+  function passwordFieldHtml({
+    id,
+    value = "",
+    autocomplete = "current-password",
+    placeholder = "",
+  }) {
+    return `
+      <div class="password-field" data-password-field>
+        <input type="password" id="${id}" value="${escapeAttr(value)}" autocomplete="${escapeAttr(
+          autocomplete
+        )}" ${placeholder ? `placeholder="${escapeAttr(placeholder)}"` : ""} />
+        <button type="button" class="btn-icon password-toggle" aria-label="Показать пароль" aria-pressed="false" title="Показать пароль">
+          ${PASSWORD_TOGGLE_ICON}
+        </button>
+      </div>`;
+  }
+
+  function bindPasswordToggles(root = document) {
+    root.querySelectorAll("[data-password-field]").forEach((wrap) => {
+      const input = wrap.querySelector("input");
+      const btn = wrap.querySelector(".password-toggle");
+      if (!input || !btn || btn.dataset.bound === "1") return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => {
+        const show = input.type === "password";
+        input.type = show ? "text" : "password";
+        btn.setAttribute("aria-pressed", String(show));
+        btn.setAttribute("aria-label", show ? "Скрыть пароль" : "Показать пароль");
+        btn.title = show ? "Скрыть пароль" : "Показать пароль";
+      });
+    });
+  }
+
+  bindPasswordToggles();
+
   el.loginForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const roleId = new FormData(el.loginForm).get("role") || "owner";
@@ -879,7 +1056,11 @@
   });
 
   function enterApp(roleId) {
-    state.role = ROLES[roleId] || ROLES.owner;
+    const base = ROLES[roleId] || ROLES.owner;
+    state.role = {
+      ...base,
+      can: { ...base.can },
+    };
     state.data = cloneSeed();
     state.view = "orders";
     state.selectedOrderId = null;
@@ -910,11 +1091,7 @@
     // Always show full menu on login so navigation is obvious
     sidebarUi.collapsed = false;
     saveSidebarState();
-
-    el.userName.textContent = state.role.name;
-    el.userRole.textContent = state.role.title;
-    el.userAvatar.textContent = state.role.initial;
-    el.userAvatar.title = `${state.role.name} — ${state.role.title}`;
+    syncHeaderUser();
 
     el.loginScreen.classList.add("hidden");
     el.app.classList.remove("hidden");
@@ -978,6 +1155,14 @@
       title: "Карточка сотрудника",
       subtitle: "Профиль и журнал действий",
     },
+    profile: {
+      title: "Личный профиль",
+      subtitle: "Ваши данные в кабинете",
+    },
+    "profile-form": {
+      title: "Редактирование профиля",
+      subtitle: "Имя и почта для входа",
+    },
   };
 
   function render() {
@@ -1031,6 +1216,12 @@
         break;
       case "staff-detail":
         renderStaffDetail();
+        break;
+      case "profile":
+        renderProfile();
+        break;
+      case "profile-form":
+        renderProfileForm();
         break;
       default:
         renderOrders();
@@ -2582,6 +2773,418 @@
       render();
     });
     labelDataTables(el.content);
+  }
+
+  /* —— Profile —— */
+  function renderProfile() {
+    if (!state.role) {
+      state.view = "orders";
+      render();
+      return;
+    }
+    const person = state.data.staff.find((s) => s.id === state.role.staffId);
+    const email = state.role.email || person?.email || "—";
+
+    el.viewTitle.textContent = "Личный профиль";
+    el.viewSubtitle.textContent = state.role.title;
+    el.topbarActions.innerHTML = `
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-change-password">Сменить пароль</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-edit-profile">Редактировать</button>
+    `;
+    document.getElementById("btn-edit-profile")?.addEventListener("click", openProfileEdit);
+    document.getElementById("btn-change-password")?.addEventListener("click", openPasswordModal);
+
+    el.content.innerHTML = `
+      <div class="profile-layout">
+        <div class="profile-avatar-slot">
+          <div class="profile-avatar-block" id="profile-avatar-preview">
+            ${avatarMarkup(state.role.avatarId, state.role.initial)}
+          </div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="stats-row" style="grid-template-columns:repeat(2,1fr);margin-bottom:18px">
+            <div class="stat"><div class="label">Роль</div><div class="value" style="font-size:16px">${state.role.title}</div></div>
+            <div class="stat"><div class="label">Статус</div><div class="value" style="font-size:16px">активен</div></div>
+          </div>
+          <div class="detail-section" style="margin-bottom:0">
+            <h4>Контакты</h4>
+            <dl class="kv">
+              <dt>ФИО</dt><dd>${state.role.name}</dd>
+              <dt>Почта</dt><dd>${email}</dd>
+              <dt>Роль в кабинете</dt><dd>${state.role.title}</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderProfileForm() {
+    if (!state.role) {
+      state.view = "orders";
+      render();
+      return;
+    }
+    const person = state.data.staff.find((s) => s.id === state.role.staffId);
+    const email = state.role.email || person?.email || "";
+    const canEditEmail =
+      state.role.id === "owner" || state.role.id === "admin";
+
+    el.viewTitle.textContent = "Редактирование профиля";
+    el.viewSubtitle.textContent = state.role.title;
+    el.topbarActions.innerHTML = backButton("К профилю", "profile");
+    bindBack("profile");
+
+    el.content.innerHTML = formShell(
+      `
+      ${avatarPickerHtml(state.role.avatarId || "")}
+      <label class="field"><span>ФИО</span>
+        <input type="text" id="profile-name" value="${escapeAttr(state.role.name)}" placeholder="Имя Фамилия" />
+      </label>
+      <label class="field ${canEditEmail ? "" : "field--readonly"}"><span>Почта для входа</span>
+        <input type="email" id="profile-email" value="${escapeAttr(email)}" placeholder="name@uniforma.online" ${
+          canEditEmail ? "" : "disabled"
+        } />
+      </label>
+      <label class="field field--readonly"><span>Роль</span>
+        <input type="text" value="${escapeAttr(state.role.title)}" disabled />
+      </label>
+      <div class="field field--full">
+        <span>Пароль</span>
+        <div class="profile-password-row">
+          <button type="button" class="btn btn-secondary" id="btn-change-password-form">Сменить пароль</button>
+        </div>
+      </div>
+    `,
+      {
+        submitLabel: "Сохранить",
+        cancelView: "profile",
+      }
+    );
+
+    document.querySelectorAll(".avatar-option input").forEach((input) => {
+      input.addEventListener("change", () => {
+        document.querySelectorAll(".avatar-option").forEach((opt) => {
+          opt.classList.toggle(
+            "is-selected",
+            opt.querySelector("input")?.checked
+          );
+        });
+      });
+    });
+
+    document.getElementById("btn-change-password-form")?.addEventListener("click", openPasswordModal);
+    document.getElementById("btn-form-cancel")?.addEventListener("click", () => {
+      state.view = "profile";
+      render();
+    });
+    document.getElementById("btn-form-save")?.addEventListener("click", () => {
+      const name = document.getElementById("profile-name").value.trim();
+      const emailInput = document.getElementById("profile-email");
+      const nextEmail = canEditEmail
+        ? emailInput.value.trim()
+        : email;
+      const avatarId =
+        document.querySelector('input[name="profile-avatar"]:checked')?.value ||
+        "";
+      if (!name || !nextEmail) {
+        toast("Укажите ФИО и почту", "warn");
+        return;
+      }
+      state.role.name = name;
+      if (canEditEmail) state.role.email = nextEmail;
+      state.role.initial = initialsFromName(name);
+      state.role.avatarId = avatarId || null;
+      if (person) {
+        person.name = name;
+        if (canEditEmail) person.email = nextEmail;
+        person.avatarId = avatarId || null;
+      }
+      logActivity({
+        action: "profile.update",
+        entityType: "profile",
+        entityLabel: name,
+        details: avatarId
+          ? `Аватар «${getAvatarById(avatarId)?.label || avatarId}»`
+          : "Аватар: инициалы",
+      });
+      syncHeaderUser();
+      toast("Профиль сохранён");
+      state.view = "profile";
+      render();
+    });
+  }
+
+  const passwordChallenge = {
+    step: 1,
+    code: null,
+    sentAt: null,
+    current: "",
+    next: "",
+  };
+
+  function openPasswordModal() {
+    if (!state.role) return;
+    passwordChallenge.step = 1;
+    passwordChallenge.code = null;
+    passwordChallenge.sentAt = null;
+    passwordChallenge.current = "";
+    passwordChallenge.next = "";
+    renderPasswordStep1();
+  }
+
+  function passwordModalEmail() {
+    return (
+      state.role?.email ||
+      state.data.staff.find((s) => s.id === state.role?.staffId)?.email ||
+      ""
+    );
+  }
+
+  function renderPasswordStep1() {
+    openModal(
+      "Смена пароля",
+      `
+      <div class="password-modal-grid">
+        <label class="field"><span>Текущий пароль</span>
+          ${passwordFieldHtml({
+            id: "pwd-current",
+            value: passwordChallenge.current,
+            autocomplete: "current-password",
+          })}
+        </label>
+        <label class="field"><span>Новый пароль</span>
+          ${passwordFieldHtml({
+            id: "pwd-new",
+            value: passwordChallenge.next,
+            autocomplete: "new-password",
+          })}
+        </label>
+        <label class="field"><span>Повторите новый пароль</span>
+          ${passwordFieldHtml({
+            id: "pwd-new2",
+            autocomplete: "new-password",
+          })}
+        </label>
+      </div>
+    `,
+      [
+        { label: "Отмена", className: "btn-secondary", action: closeModal },
+        { label: "Далее", className: "btn-primary", action: goPasswordStep2 },
+      ]
+    );
+    bindPasswordToggles(el.modalBody);
+    requestAnimationFrame(() => document.getElementById("pwd-current")?.focus());
+  }
+
+  function goPasswordStep2() {
+    const current = document.getElementById("pwd-current")?.value || "";
+    const next = document.getElementById("pwd-new")?.value || "";
+    const next2 = document.getElementById("pwd-new2")?.value || "";
+
+    if (!current) {
+      toast("Укажите текущий пароль", "warn");
+      return;
+    }
+    if (current !== "demo") {
+      toast("Текущий пароль неверный (в превью: demo)", "warn");
+      return;
+    }
+    if (next.length < 6) {
+      toast("Новый пароль — не короче 6 символов", "warn");
+      return;
+    }
+    if (next !== next2) {
+      toast("Новый пароль и подтверждение не совпадают", "warn");
+      return;
+    }
+    if (next === current) {
+      toast("Новый пароль должен отличаться от текущего", "warn");
+      return;
+    }
+
+    passwordChallenge.current = current;
+    passwordChallenge.next = next;
+    passwordChallenge.step = 2;
+    passwordChallenge.code = null;
+    passwordChallenge.sentAt = null;
+    renderPasswordStep2();
+  }
+
+  function renderPasswordStep2() {
+    const email = passwordModalEmail();
+    openModal(
+      "Подтверждение по почте",
+      `
+      <p class="callout" style="margin:0 0 14px">Код отправим на <strong>${escapeAttr(
+        email
+      )}</strong></p>
+      <div class="password-modal-grid">
+        <div class="password-code-row">
+          <button type="button" class="btn btn-secondary" id="pwd-send-code">Отправить код</button>
+          <p class="field-hint" id="pwd-code-hint" style="margin:0">Код ещё не отправлен</p>
+        </div>
+        <div>
+          <span class="otp-label">Код из письма</span>
+          <div class="otp-inputs" id="pwd-otp" role="group" aria-label="Шестизначный код">
+            ${[0, 1, 2, 3, 4, 5]
+              .map(
+                (i) =>
+                  `<input type="text" class="otp-digit" data-otp-index="${i}" inputmode="numeric" maxlength="1" autocomplete="${
+                    i === 0 ? "one-time-code" : "off"
+                  }" aria-label="Цифра ${i + 1}" />`
+              )
+              .join("")}
+          </div>
+        </div>
+      </div>
+    `,
+      [
+        {
+          label: "Назад",
+          className: "btn-secondary",
+          action: () => {
+            passwordChallenge.step = 1;
+            renderPasswordStep1();
+          },
+        },
+        {
+          label: "Сохранить пароль",
+          className: "btn-primary",
+          action: submitPasswordChange,
+        },
+      ]
+    );
+
+    bindOtpInputs(document.getElementById("pwd-otp"));
+    document.getElementById("pwd-send-code")?.addEventListener("click", sendPasswordCode);
+  }
+
+  function sendPasswordCode() {
+    const email = passwordModalEmail();
+    passwordChallenge.code = String(Math.floor(100000 + Math.random() * 900000));
+    passwordChallenge.sentAt = Date.now();
+    const hint = document.getElementById("pwd-code-hint");
+    if (hint) {
+      hint.innerHTML = `Код отправлен. В превью: <strong>${passwordChallenge.code}</strong>`;
+    }
+    toast(`Код отправлен на ${email}`);
+    const first = document.querySelector("#pwd-otp .otp-digit");
+    first?.focus();
+    first?.select();
+  }
+
+  function readOtpCode() {
+    return [...document.querySelectorAll("#pwd-otp .otp-digit")]
+      .map((input) => input.value.replace(/\D/g, ""))
+      .join("");
+  }
+
+  function bindOtpInputs(root) {
+    if (!root) return;
+    const digits = [...root.querySelectorAll(".otp-digit")];
+
+    const focusAt = (index) => {
+      const el = digits[index];
+      if (!el) return;
+      el.focus();
+      el.select();
+    };
+
+    const maybeAutoSubmit = () => {
+      if (readOtpCode().length === digits.length) {
+        submitPasswordChange();
+      }
+    };
+
+    digits.forEach((input, index) => {
+      input.addEventListener("input", (e) => {
+        const raw = e.target.value.replace(/\D/g, "");
+        if (!raw) {
+          e.target.value = "";
+          return;
+        }
+        // Paste or multi-char: distribute across boxes
+        if (raw.length > 1) {
+          const chars = raw.slice(0, digits.length - index).split("");
+          chars.forEach((ch, offset) => {
+            if (digits[index + offset]) digits[index + offset].value = ch;
+          });
+          focusAt(Math.min(index + chars.length, digits.length - 1));
+          maybeAutoSubmit();
+          return;
+        }
+        e.target.value = raw.slice(-1);
+        if (index < digits.length - 1) focusAt(index + 1);
+        else maybeAutoSubmit();
+      });
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace") {
+          if (e.target.value) {
+            e.target.value = "";
+            return;
+          }
+          if (index > 0) {
+            e.preventDefault();
+            digits[index - 1].value = "";
+            focusAt(index - 1);
+          }
+          return;
+        }
+        if (e.key === "ArrowLeft" && index > 0) {
+          e.preventDefault();
+          focusAt(index - 1);
+        }
+        if (e.key === "ArrowRight" && index < digits.length - 1) {
+          e.preventDefault();
+          focusAt(index + 1);
+        }
+      });
+
+      input.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData)
+          .getData("text")
+          .replace(/\D/g, "")
+          .slice(0, digits.length);
+        if (!text) return;
+        text.split("").forEach((ch, i) => {
+          if (digits[i]) digits[i].value = ch;
+        });
+        focusAt(Math.min(text.length, digits.length - 1));
+        maybeAutoSubmit();
+      });
+
+      input.addEventListener("focus", () => input.select());
+    });
+  }
+
+  function submitPasswordChange() {
+    const code = readOtpCode();
+
+    if (!passwordChallenge.code) {
+      toast("Сначала отправьте код на почту", "warn");
+      return;
+    }
+    if (!/^\d{6}$/.test(code) || code !== passwordChallenge.code) {
+      toast("Неверный код из письма", "warn");
+      return;
+    }
+
+    logActivity({
+      action: "profile.password",
+      entityType: "profile",
+      entityLabel: state.role.name,
+      details: "Код подтверждён, пароль обновлён",
+    });
+    passwordChallenge.code = null;
+    passwordChallenge.sentAt = null;
+    passwordChallenge.current = "";
+    passwordChallenge.next = "";
+    passwordChallenge.step = 1;
+    closeModal();
+    toast("Пароль изменён");
   }
 
   /* —— Settings —— */

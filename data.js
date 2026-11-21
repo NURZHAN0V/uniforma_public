@@ -8,6 +8,7 @@ const ROLES = {
     name: "Елена Соколова",
     email: "owner@uniforma.online",
     initial: "ЕС",
+    avatarId: "north",
     can: {
       moderate: true,
       viewOrders: true,
@@ -28,6 +29,7 @@ const ROLES = {
     name: "Дмитрий Орлов",
     email: "admin@uniforma.online",
     initial: "ДО",
+    avatarId: "slate",
     can: {
       moderate: true,
       viewOrders: true,
@@ -48,6 +50,7 @@ const ROLES = {
     name: "Анна Ким",
     email: "moderator@uniforma.online",
     initial: "АК",
+    avatarId: "violet",
     can: {
       moderate: true,
       viewOrders: true,
@@ -185,18 +188,21 @@ function cloneSeed() {
         name: "Елена Соколова",
         email: "owner@uniforma.online",
         role: "owner",
+        avatarId: "north",
       },
       {
         id: "s2",
         name: "Дмитрий Орлов",
         email: "admin@uniforma.online",
         role: "admin",
+        avatarId: "slate",
       },
       {
         id: "s3",
         name: "Анна Ким",
         email: "moderator@uniforma.online",
         role: "moderator",
+        avatarId: "violet",
       },
     ],
     activity: [
