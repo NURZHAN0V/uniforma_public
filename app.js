@@ -205,6 +205,7 @@
   }
 
   function bindSortHeaders(filters, redraw) {
+    labelDataTables(el.content);
     el.content.querySelectorAll("[data-sort-key]").forEach((th) => {
       th.addEventListener("click", () => {
         const key = th.dataset.sortKey;
@@ -242,7 +243,11 @@
     expandedGroups: new Set(storedSidebar.expandedGroups),
     flyoutId: null,
     hideFlyoutTimer: null,
+    navOpen: false,
   };
+
+  const mqCompact = window.matchMedia("(max-width: 900px)");
+  const isCompactNav = () => mqCompact.matches;
 
   const el = {
     loginScreen: document.getElementById("login-screen"),
@@ -263,6 +268,9 @@
     btnSidebarCollapse: document.getElementById("btn-sidebar-collapse"),
     btnSidebarExpand: document.getElementById("btn-sidebar-expand"),
     btnSidebarEdge: document.getElementById("btn-sidebar-edge"),
+    btnNavOpen: document.getElementById("btn-nav-open"),
+    btnNavClose: document.getElementById("btn-nav-close"),
+    navBackdrop: document.getElementById("nav-backdrop"),
     drawer: document.getElementById("order-drawer"),
     drawerBackdrop: document.getElementById("drawer-backdrop"),
     drawerTitle: document.getElementById("drawer-title"),
@@ -424,15 +432,23 @@
     state.view = view;
     closeDrawer();
     closeFlyout();
+    closeMobileNav();
     renderSidebar();
     render();
   }
 
   function applyCollapsedUi() {
-    el.app.classList.toggle("sidebar-collapsed", sidebarUi.collapsed);
-    el.sidebar.classList.toggle("is-collapsed", sidebarUi.collapsed);
-    el.sidebar.setAttribute("aria-expanded", String(!sidebarUi.collapsed));
-    const label = sidebarUi.collapsed ? "Развернуть меню" : "Свернуть меню";
+    const compact = isCompactNav();
+    const collapsed = compact ? false : sidebarUi.collapsed;
+    el.app.classList.toggle("is-compact", compact);
+    el.app.classList.toggle("sidebar-collapsed", collapsed);
+    el.sidebar.classList.toggle("is-collapsed", collapsed);
+    el.sidebar.setAttribute(
+      "aria-expanded",
+      String(compact ? sidebarUi.navOpen : !collapsed)
+    );
+    el.btnNavOpen?.setAttribute("aria-expanded", String(sidebarUi.navOpen));
+    const label = collapsed ? "Развернуть меню" : "Свернуть меню";
     el.btnSidebarCollapse?.setAttribute("aria-label", label);
     el.btnSidebarCollapse?.setAttribute("data-tooltip", label);
     el.btnSidebarExpand?.setAttribute("aria-label", label);
@@ -440,11 +456,16 @@
     el.btnSidebarEdge?.setAttribute("aria-label", label);
     el.btnSidebarEdge?.setAttribute(
       "data-tooltip",
-      sidebarUi.collapsed ? "Развернуть меню" : "Свернуть меню"
+      collapsed ? "Развернуть меню" : "Свернуть меню"
     );
   }
 
   function setCollapsed(value) {
+    if (isCompactNav()) {
+      if (value) closeMobileNav();
+      else openMobileNav();
+      return;
+    }
     sidebarUi.collapsed = value;
     closeFlyout();
     hideTooltip();
@@ -455,6 +476,29 @@
 
   function toggleCollapsed() {
     setCollapsed(!sidebarUi.collapsed);
+  }
+
+  function openMobileNav() {
+    if (!isCompactNav()) return;
+    sidebarUi.navOpen = true;
+    el.app.classList.add("nav-open");
+    el.navBackdrop?.classList.remove("hidden");
+    el.navBackdrop?.removeAttribute("hidden");
+    el.btnNavOpen?.setAttribute("aria-expanded", "true");
+    el.sidebar.setAttribute("aria-expanded", "true");
+    document.body.classList.add("nav-lock");
+    closeFlyout();
+    hideTooltip();
+  }
+
+  function closeMobileNav() {
+    sidebarUi.navOpen = false;
+    el.app.classList.remove("nav-open");
+    el.navBackdrop?.classList.add("hidden");
+    el.navBackdrop?.setAttribute("hidden", "");
+    el.btnNavOpen?.setAttribute("aria-expanded", "false");
+    if (isCompactNav()) el.sidebar.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("nav-lock");
   }
 
   function clearHideFlyoutTimer() {
@@ -482,25 +526,49 @@
   }
 
   function positionFlyout(anchorEl) {
+    if (!anchorEl || !el.sidebarFlyout) return;
     const rect = anchorEl.getBoundingClientRect();
     const pad = 8;
-    el.sidebarFlyout.style.left = `${Math.round(rect.right + FLYOUT_GAP)}px`;
-    el.sidebarFlyout.style.top = `${Math.round(rect.top)}px`;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    el.sidebarFlyout.style.visibility = "hidden";
+    el.sidebarFlyout.style.left = "0px";
+    el.sidebarFlyout.style.top = "0px";
+    el.sidebarFlyout.style.maxHeight = "";
+    el.sidebarFlyout.style.overflowY = "";
     el.sidebarFlyout.classList.remove("hidden");
-    const tipRect = el.sidebarFlyout.getBoundingClientRect();
-    let top = tipRect.top;
-    let left = tipRect.left;
-    if (tipRect.bottom > window.innerHeight - pad) {
-      top = Math.max(pad, window.innerHeight - tipRect.height - pad);
+
+    const tipW = el.sidebarFlyout.offsetWidth;
+    const tipH = el.sidebarFlyout.offsetHeight;
+    const maxH = Math.max(80, vh - pad * 2);
+
+    let left = rect.right + FLYOUT_GAP;
+    // Prefer aligning with the anchor; if it overflows bottom, pin to viewport bottom.
+    let top = rect.top;
+    if (top + tipH > vh - pad) {
+      top = vh - Math.min(tipH, maxH) - pad;
     }
-    if (tipRect.right > window.innerWidth - pad) {
-      left = Math.max(pad, rect.left - tipRect.width - FLYOUT_GAP);
+    // If still overflowing top (tall menu), pin to top and scroll inside.
+    if (top < pad) top = pad;
+    if (tipH > maxH) {
+      el.sidebarFlyout.style.maxHeight = `${maxH}px`;
+      el.sidebarFlyout.style.overflowY = "auto";
+      top = pad;
     }
-    el.sidebarFlyout.style.top = `${Math.round(top)}px`;
+
+    if (left + tipW > vw - pad) {
+      left = Math.max(pad, rect.left - tipW - FLYOUT_GAP);
+    }
+    left = Math.min(Math.max(pad, left), Math.max(pad, vw - tipW - pad));
+
     el.sidebarFlyout.style.left = `${Math.round(left)}px`;
+    el.sidebarFlyout.style.top = `${Math.round(top)}px`;
+    el.sidebarFlyout.style.visibility = "";
   }
 
   function showFlyout(groupId, anchorEl) {
+    if (isCompactNav()) return;
     const group = visibleGroups().find((g) => g.id === groupId);
     if (!group || !group.items.length || !anchorEl) return;
     clearHideFlyoutTimer();
@@ -584,13 +652,29 @@
         left = rect.right + gap;
     }
 
-    left = Math.min(Math.max(pad, left), window.innerWidth - tw - pad);
-    top = Math.min(Math.max(pad, top), window.innerHeight - th - pad);
+    left = Math.min(Math.max(pad, left), Math.max(pad, window.innerWidth - tw - pad));
+    top = Math.min(Math.max(pad, top), Math.max(pad, window.innerHeight - th - pad));
 
     tip.style.top = `${Math.round(top)}px`;
     tip.style.left = `${Math.round(left)}px`;
     tip.style.transform = "none";
-    requestAnimationFrame(() => tip.classList.add("is-visible"));
+    // Re-clamp after paint in case wrapping/fonts change measured size.
+    requestAnimationFrame(() => {
+      const r = tip.getBoundingClientRect();
+      let t = r.top;
+      let l = r.left;
+      if (r.bottom > window.innerHeight - pad) {
+        t = Math.max(pad, window.innerHeight - r.height - pad);
+      }
+      if (r.top < pad) t = pad;
+      if (r.right > window.innerWidth - pad) {
+        l = Math.max(pad, window.innerWidth - r.width - pad);
+      }
+      if (r.left < pad) l = pad;
+      tip.style.top = `${Math.round(t)}px`;
+      tip.style.left = `${Math.round(l)}px`;
+      tip.classList.add("is-visible");
+    });
   }
 
   function hideTooltip() {
@@ -631,6 +715,8 @@
 
   function renderSidebar() {
     const groups = visibleGroups();
+    const compact = isCompactNav();
+    const collapsed = !compact && sidebarUi.collapsed;
     el.sidebarNav.innerHTML = groups
       .map((group) => {
         const active = isGroupActive(group);
@@ -638,7 +724,21 @@
         const groupBadge = `<span class="nav-badge${groupCount > 0 ? " show" : ""}" data-group-badge="${group.id}">${
           groupCount > 9 ? "9+" : groupCount || ""
         }</span>`;
-        const collapsed = sidebarUi.collapsed;
+        const inlineItems =
+          compact && group.items.length
+            ? `<div class="nav-group-items">
+                ${group.items
+                  .map(
+                    (item) => `
+                  <button type="button" class="nav-item ${item.view === state.view ? "active" : ""}" data-view="${item.view}">
+                    <span class="nav-item-icon-wrap">${NAV_ICONS[item.icon] || ""}</span>
+                    <span class="nav-item-label">${item.label}</span>
+                    ${item.badge ? `<span class="nav-badge" data-badge="${item.badge}"></span>` : ""}
+                  </button>`
+                  )
+                  .join("")}
+              </div>`
+            : "";
 
         return `
           <div class="nav-group ${active ? "is-active" : ""}" data-group="${group.id}">
@@ -647,7 +747,7 @@
               class="nav-section ${collapsed ? "nav-section--icon" : ""} ${active ? "active" : ""}"
               data-flyout-group="${group.id}"
               aria-label="${group.label}"
-              aria-expanded="${sidebarUi.flyoutId === group.id}"
+              aria-expanded="${compact ? "true" : sidebarUi.flyoutId === group.id}"
               ${collapsed ? `data-tooltip="${group.label}" data-tooltip-placement="right"` : ""}
             >
               <span class="nav-item-icon-wrap">
@@ -660,6 +760,7 @@
                   : `<span class="nav-section-label">${group.label}</span>${groupBadge}`
               }
             </button>
+            ${inlineItems}
           </div>`;
       })
       .join("");
@@ -669,12 +770,20 @@
   }
 
   function bindSidebarNavEvents() {
+    el.sidebarNav.querySelectorAll("[data-view]").forEach((btn) => {
+      btn.addEventListener("click", () => navigateTo(btn.dataset.view));
+    });
+
     el.sidebarNav.querySelectorAll("[data-flyout-group]").forEach((btn) => {
       const groupId = btn.dataset.flyoutGroup;
       const groupEl = btn.closest(".nav-group");
       const group = visibleGroups().find((g) => g.id === groupId);
 
       btn.addEventListener("click", () => {
+        if (isCompactNav()) {
+          if (group?.items.length === 1) navigateTo(group.items[0].view);
+          return;
+        }
         if (group?.items.length === 1) {
           navigateTo(group.items[0].view);
           return;
@@ -683,10 +792,14 @@
       });
 
       groupEl?.addEventListener("mouseenter", () => {
+        if (isCompactNav()) return;
         hideTooltip();
         showFlyout(groupId, groupEl);
       });
-      groupEl?.addEventListener("mouseleave", scheduleHideFlyout);
+      groupEl?.addEventListener("mouseleave", () => {
+        if (isCompactNav()) return;
+        scheduleHideFlyout();
+      });
     });
   }
 
@@ -696,25 +809,54 @@
   el.btnSidebarCollapse?.addEventListener("click", toggleCollapsed);
   el.btnSidebarExpand?.addEventListener("click", toggleCollapsed);
   el.btnSidebarEdge?.addEventListener("click", toggleCollapsed);
+  el.btnNavOpen?.addEventListener("click", openMobileNav);
+  el.btnNavClose?.addEventListener("click", closeMobileNav);
+  el.navBackdrop?.addEventListener("click", closeMobileNav);
 
-  el.userAvatar?.addEventListener("click", () => {
-    if (!sidebarUi.collapsed || !state.role) return;
-    const rect = el.userAvatar.getBoundingClientRect();
+  const onCompactChange = () => {
+    closeFlyout();
+    hideTooltip();
+    if (!isCompactNav()) closeMobileNav();
+    applyCollapsedUi();
+    if (state.role) renderSidebar();
+  };
+  if (typeof mqCompact.addEventListener === "function") {
+    mqCompact.addEventListener("change", onCompactChange);
+  } else if (typeof mqCompact.addListener === "function") {
+    mqCompact.addListener(onCompactChange);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sidebarUi.navOpen) closeMobileNav();
+  });
+
+  function showUserFlyout() {
+    if (isCompactNav() || !sidebarUi.collapsed || !state.role || !el.userAvatar) return;
+    clearHideFlyoutTimer();
+    hideTooltip();
+    el.sidebarNav
+      ?.querySelectorAll(".nav-section.is-flyout-open")
+      .forEach((btn) => btn.classList.remove("is-flyout-open"));
     el.sidebarFlyout.innerHTML = `
       <p class="sidebar-flyout-title">${state.role.name}</p>
       <button type="button" class="nav-item" id="flyout-logout" role="menuitem">
         <span class="nav-item-label">Выйти</span>
       </button>
     `;
-    el.sidebarFlyout.style.top = `${Math.round(rect.top)}px`;
-    el.sidebarFlyout.style.left = `${Math.round(rect.right + FLYOUT_GAP)}px`;
-    el.sidebarFlyout.classList.remove("hidden");
     sidebarUi.flyoutId = "user";
+    positionFlyout(el.userAvatar);
     document.getElementById("flyout-logout")?.addEventListener("click", () => {
       closeFlyout();
       el.btnLogout.click();
     });
+  }
+
+  el.userAvatar?.addEventListener("click", showUserFlyout);
+  el.userAvatar?.addEventListener("mouseenter", () => {
+    if (!sidebarUi.collapsed || !state.role) return;
+    showUserFlyout();
   });
+  el.userAvatar?.addEventListener("mouseleave", scheduleHideFlyout);
 
   /* —— login / logout —— */
   el.loginForm.addEventListener("submit", (e) => {
@@ -727,6 +869,7 @@
     closeDrawer();
     closeModal();
     closeFlyout();
+    closeMobileNav();
     state.role = null;
     state.view = "orders";
     state.selectedOrderId = null;
@@ -892,6 +1035,25 @@
       default:
         renderOrders();
     }
+    labelDataTables(el.content);
+  }
+
+  function labelDataTables(root) {
+    root?.querySelectorAll("table.data").forEach((table) => {
+      const headers = [...table.querySelectorAll("thead th")].map((th) =>
+        th.textContent.replace(/[↕↑↓]/g, "").replace(/\s+/g, " ").trim()
+      );
+      table.querySelectorAll("tbody tr").forEach((tr) => {
+        const cells = tr.querySelectorAll("td");
+        cells.forEach((td, i) => {
+          if (td.hasAttribute("colspan")) {
+            td.removeAttribute("data-label");
+            return;
+          }
+          if (headers[i]) td.setAttribute("data-label", headers[i]);
+        });
+      });
+    });
   }
 
   function backButton(label, view) {
@@ -2419,6 +2581,7 @@
       state.view = "catalog";
       render();
     });
+    labelDataTables(el.content);
   }
 
   /* —— Settings —— */
